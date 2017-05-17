@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 The Android Open Source Project
+ * Copyright (C) 2017 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,18 +14,16 @@
  * limitations under the License.
  */
 
-#ifndef _LIBLOG_FAKE_LOG_DEVICE_H
-#define _LIBLOG_FAKE_LOG_DEVICE_H
+#include "LogBufferInterface.h"
+#include "LogUtils.h"
 
-#include <sys/types.h>
-
-#include "log_portability.h"
-
-struct iovec;
-
-LIBLOG_HIDDEN int fakeLogOpen(const char* pathName);
-LIBLOG_HIDDEN int fakeLogClose(int fd);
-LIBLOG_HIDDEN ssize_t fakeLogWritev(int fd, const struct iovec* vector,
-                                    int count);
-
-#endif  // _LIBLOG_FAKE_LOG_DEVICE_H
+LogBufferInterface::LogBufferInterface() {
+}
+LogBufferInterface::~LogBufferInterface() {
+}
+uid_t LogBufferInterface::pidToUid(pid_t pid) {
+    return android::pidToUid(pid);
+}
+pid_t LogBufferInterface::tidToPid(pid_t tid) {
+    return android::tidToPid(tid);
+}
