@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 The Android Open Source Project
+ * Copyright 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#include <signal.h>
-#include <stdlib.h>
-
-#include "logcat.h"
-
-int main(int argc, char** argv, char** envp) {
-    android_logcat_context ctx = create_android_logcat();
-    if (!ctx) return -1;
-    signal(SIGPIPE, exit);
-    int retval = android_logcat_run_command(ctx, -1, -1, argc, argv, envp);
-    int ret = android_logcat_destroy(&ctx);
-    if (!ret) ret = retval;
-    return ret;
+cc_fuzz {
+    name: "log_buffer_log_fuzzer",
+    srcs: [
+        "log_buffer_log_fuzzer.cpp",
+    ],
+    static_libs: [
+        "libbase",
+        "libcutils",
+        "libselinux",
+        "liblog",
+        "liblogd",
+        "libcutils",
+    ],
+    cflags: ["-Werror"],
 }
