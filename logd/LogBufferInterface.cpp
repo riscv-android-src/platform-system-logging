@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The Android Open Source Project
+ * Copyright (C) 2017 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-cc_fuzz {
-    name: "log_buffer_log_fuzzer",
-    srcs: [
-        "log_buffer_log_fuzzer.cpp",
-    ],
-    static_libs: [
-        "libbase",
-        "libcutils",
-        "libselinux",
-        "liblog",
-        "liblogd",
-        "libcutils",
-    ],
-    cflags: ["-Werror"],
+
+#include "LogBufferInterface.h"
+#include "LogUtils.h"
+
+LogBufferInterface::LogBufferInterface() {
+}
+LogBufferInterface::~LogBufferInterface() {
+}
+uid_t LogBufferInterface::pidToUid(pid_t pid) {
+    return android::pidToUid(pid);
+}
+pid_t LogBufferInterface::tidToPid(pid_t tid) {
+    return android::tidToPid(tid);
 }
