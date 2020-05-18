@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2013 The Android Open Source Project
+ * Copyright (C) 2012-2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,26 +16,9 @@
 
 #pragma once
 
-#include <sysutils/SocketListener.h>
+#include <sys/types.h>
 
-#include "LogBuffer.h"
-#include "LogReaderList.h"
-#include "LogReaderThread.h"
+#include <sysutils/SocketClient.h>
 
-#define LOGD_SNDTIMEO 32
-
-class LogReader : public SocketListener {
-  public:
-    explicit LogReader(LogBuffer* logbuf, LogReaderList* reader_list);
-
-  protected:
-    virtual bool onDataAvailable(SocketClient* cli);
-
-  private:
-    static int getLogSocket();
-
-    bool DoSocketDelete(SocketClient* cli);
-
-    LogBuffer* log_buffer_;
-    LogReaderList* reader_list_;
-};
+bool clientHasLogCredentials(uid_t uid, gid_t gid, pid_t pid);
+bool clientHasLogCredentials(SocketClient* cli);
