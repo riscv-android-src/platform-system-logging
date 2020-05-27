@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 The Android Open Source Project
+ * Copyright (C) 2012-2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,9 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <sys/types.h>
 
-int __android_log_is_debuggable();
+#include <sysutils/SocketClient.h>
 
-#ifdef __cplusplus
-}
-#endif
+bool clientHasLogCredentials(uid_t uid, gid_t gid, pid_t pid);
+bool clientHasLogCredentials(SocketClient* cli);

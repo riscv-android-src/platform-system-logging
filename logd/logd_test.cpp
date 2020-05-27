@@ -39,7 +39,7 @@
 #include <selinux/selinux.h>
 #endif
 
-#include "../LogReader.h"  // pickup LOGD_SNDTIMEO
+#include "LogReader.h"  // pickup LOGD_SNDTIMEO
 
 #ifdef __ANDROID__
 static void send_to_control(char* buf, size_t len) {
@@ -583,6 +583,7 @@ TEST(logd, timeout_start_epoch) {
         "dumpAndClose lids=0,1,2,3,4,5 timeout=6 start=0.000000000");
 }
 
+#ifdef ENABLE_FLAKY_TESTS
 // b/26447386 refined behavior
 TEST(logd, timeout) {
 #ifdef __ANDROID__
@@ -605,7 +606,7 @@ TEST(logd, timeout) {
     // A few tries to get it right just in case wrap kicks in due to
     // content providers being active during the test.
     int i = 5;
-    log_time start(android_log_clockid());
+    log_time start(CLOCK_REALTIME);
     start.tv_sec -= 30;  // reach back a moderate period of time
 
     while (--i) {
@@ -681,7 +682,7 @@ TEST(logd, timeout) {
             if (msg > start) {
                 start = msg;
                 start.tv_sec += 30;
-                log_time now = log_time(android_log_clockid());
+                log_time now = log_time(CLOCK_REALTIME);
                 if (start > now) {
                     start = now;
                     --start.tv_sec;
@@ -717,6 +718,7 @@ TEST(logd, timeout) {
     GTEST_LOG_(INFO) << "This test does nothing.\n";
 #endif
 }
+#endif
 
 // b/27242723 confirmed fixed
 TEST(logd, SNDTIMEO) {
@@ -902,10 +904,10 @@ void __android_log_btwrite_multiple__helper(int count) {
             (log_msg.entry.len == (4 + 1 + 8))) {
             if (tag != 0) continue;
 
-            log_time tx(eventData + 4 + 1);
-            if (ts == tx) {
+            log_time* tx = reinterpret_cast<log_time*>(eventData + 4 + 1);
+            if (ts == *tx) {
                 ++count;
-            } else if (ts1 == tx) {
+            } else if (ts1 == *tx) {
                 ++second_count;
             }
         } else if (eventData[4] == EVENT_TYPE_STRING) {
