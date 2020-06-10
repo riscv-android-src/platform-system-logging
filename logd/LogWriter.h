@@ -18,4 +18,26 @@
 
 #include <string>
 
-std::string& GetDefaultTag();
+#include <log/log_read.h>
+
+// An interface for writing logs to a reader.
+class LogWriter {
+  public:
+    LogWriter(uid_t uid, bool privileged) : uid_(uid), privileged_(privileged) {}
+    virtual ~LogWriter() {}
+
+    virtual bool Write(const logger_entry& entry, const char* msg) = 0;
+    virtual void Shutdown() {}
+    virtual void Release() {}
+
+    virtual std::string name() const = 0;
+    uid_t uid() const { return uid_; }
+
+    bool privileged() const { return privileged_; }
+
+  private:
+    uid_t uid_;
+
+    // If this writer sees logs from all UIDs or only its own UID.  See clientHasLogCredentials().
+    bool privileged_;
+};

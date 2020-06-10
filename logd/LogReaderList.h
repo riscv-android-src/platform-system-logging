@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,21 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <list>
+#include <memory>
+#include <mutex>
 
-int __android_log_is_debuggable();
+#include "LogBuffer.h"
+#include "LogReaderThread.h"
 
-#ifdef __cplusplus
-}
-#endif
+class LogReaderList {
+  public:
+    void NotifyNewLog(LogMask log_mask) const;
+
+    std::list<std::unique_ptr<LogReaderThread>>& reader_threads() { return reader_threads_; }
+    std::mutex& reader_threads_lock() { return reader_threads_lock_; }
+
+  private:
+    std::list<std::unique_ptr<LogReaderThread>> reader_threads_;
+    mutable std::mutex reader_threads_lock_;
+};
