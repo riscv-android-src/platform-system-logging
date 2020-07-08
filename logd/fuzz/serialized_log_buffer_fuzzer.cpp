@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2013 The Android Open Source Project
+ * Copyright 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,20 +14,6 @@
  * limitations under the License.
  */
 
-#pragma once
+#define FUZZ_SERIALIZED
 
-#include "LogBuffer.h"
-
-class LogListener {
-  public:
-    explicit LogListener(LogBuffer* buf);
-    bool StartListener();
-
-  private:
-    void ThreadFunction();
-    void HandleData();
-    static int GetLogSocket();
-
-    int socket_;
-    LogBuffer* logbuf_;
-};
+#include "log_buffer_log_fuzzer.cpp"
