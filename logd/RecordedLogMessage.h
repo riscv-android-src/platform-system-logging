@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,15 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <inttypes.h>
 
-/* Returns `1` if the device is debuggable or `0` if not. */
-int __android_log_is_debuggable();
+#include <log/log_time.h>
 
-#ifdef __cplusplus
-}
-#endif
+struct __attribute__((packed)) RecordedLogMessage {
+    uint32_t uid;
+    uint32_t pid;
+    uint32_t tid;
+    log_time realtime;
+    uint16_t msg_len;
+    uint8_t log_id;
+};
