@@ -86,30 +86,24 @@ int SerializedLogBuffer::Log(log_id_t log_id, log_time realtime, uid_t uid, pid_
 
     auto sequence = sequence_.fetch_add(1, std::memory_order_relaxed);
 
-    pending_write_ = true;
-    {
-        auto lock = std::lock_guard{logd_lock};
+    auto lock = std::lock_guard{logd_lock};
 
-        if (logs_[log_id].empty()) {
-            logs_[log_id].push_back(SerializedLogChunk(max_size_[log_id] / 4));
-        }
-
-        auto total_len = sizeof(SerializedLogEntry) + len;
-        if (!logs_[log_id].back().CanLog(total_len)) {
-            logs_[log_id].back().FinishWriting();
-            logs_[log_id].push_back(SerializedLogChunk(max_size_[log_id] / 4));
-        }
-
-        auto entry = logs_[log_id].back().Log(sequence, realtime, uid, pid, tid, msg, len);
-        stats_->Add(entry->ToLogStatisticsElement(log_id));
-
-        MaybePrune(log_id);
-
-        reader_list_->NotifyNewLog(1 << log_id);
+    if (logs_[log_id].empty()) {
+        logs_[log_id].push_back(SerializedLogChunk(max_size_[log_id] / 4));
     }
-    pending_write_ = false;
-    FutexWake(&pending_write_);
 
+    auto total_len = sizeof(SerializedLogEntry) + len;
+    if (!logs_[log_id].back().CanLog(total_len)) {
+        logs_[log_id].back().FinishWriting();
+        logs_[log_id].push_back(SerializedLogChunk(max_size_[log_id] / 4));
+    }
+
+    auto entry = logs_[log_id].back().Log(sequence, realtime, uid, pid, tid, msg, len);
+    stats_->Add(entry->ToLogStatisticsElement(log_id));
+
+    MaybePrune(log_id);
+
+    reader_list_->NotifyNewLog(1 << log_id);
     return len;
 }
 
@@ -135,14 +129,6 @@ void SerializedLogBuffer::RemoveChunkFromStats(log_id_t log_id, SerializedLogChu
         read_offset += entry->total_len();
     }
     chunk.DecReaderRefCount();
-}
-
-void SerializedLogBuffer::NotifyReadersOfPrune(
-        log_id_t log_id, const std::list<SerializedLogChunk>::iterator& chunk) {
-    for (const auto& reader_thread : reader_list_->reader_threads()) {
-        auto& state = reinterpret_cast<SerializedFlushToState&>(reader_thread->flush_to_state());
-        state.Prune(log_id, chunk);
-    }
 }
 
 void SerializedLogBuffer::Prune(log_id_t log_id, size_t bytes_to_free, uid_t uid) {
@@ -180,7 +166,7 @@ void SerializedLogBuffer::Prune(log_id_t log_id, size_t bytes_to_free, uid_t uid
 
         // Readers may have a reference to the chunk to track their last read log_position.
         // Notify them to delete the reference.
-        NotifyReadersOfPrune(log_id, it_to_prune);
+        it_to_prune->NotifyReadersOfPrune(log_id);
 
         if (uid != 0) {
             // Reorder the log buffer to remove logs from the given UID.  If there are no logs left
@@ -211,16 +197,7 @@ bool SerializedLogBuffer::FlushTo(
                                          log_time realtime)>& filter) {
     auto& state = reinterpret_cast<SerializedFlushToState&>(abstract_state);
 
-    while (true) {
-        if (pending_write_) {
-            logd_lock.unlock();
-            FutexWait(&pending_write_, true);
-            logd_lock.lock();
-        }
-
-        if (!state.HasUnreadLogs()) {
-            break;
-        }
+    while (state.HasUnreadLogs()) {
         LogWithId top = state.PopNextUnreadLog();
         auto* entry = top.entry;
         auto log_id = top.log_id;
