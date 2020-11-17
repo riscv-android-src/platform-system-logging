@@ -36,7 +36,9 @@ cc_library_headers {
     name: "liblog_headers",
     host_supported: true,
     vendor_available: true,
+    product_available: true,
     ramdisk_available: true,
+    vendor_ramdisk_available: true,
     recovery_available: true,
     apex_available: [
         "//apex_available:platform",
@@ -58,6 +60,9 @@ cc_library_headers {
         vendor: {
             override_export_include_dirs: ["include_vndk"],
         },
+        product: {
+            override_export_include_dirs: ["include_vndk"],
+        },
     },
 }
 
@@ -67,6 +72,7 @@ cc_library {
     name: "liblog",
     host_supported: true,
     ramdisk_available: true,
+    vendor_ramdisk_available: true,
     recovery_available: true,
     native_bridge_supported: true,
     llndk_stubs: "liblog.llndk",
