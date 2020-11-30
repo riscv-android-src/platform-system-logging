@@ -41,9 +41,9 @@ void SerializedLogBuffer::Init() {
     }
 
     // Release any sleeping reader threads to dump their current content.
-    auto reader_threads_lock = std::lock_guard{reader_list_->reader_threads_lock()};
+    auto lock = std::lock_guard{logd_lock};
     for (const auto& reader_thread : reader_list_->reader_threads()) {
-        reader_thread->triggerReader_Locked();
+        reader_thread->TriggerReader();
     }
 }
 
@@ -86,7 +86,7 @@ int SerializedLogBuffer::Log(log_id_t log_id, log_time realtime, uid_t uid, pid_
 
     auto sequence = sequence_.fetch_add(1, std::memory_order_relaxed);
 
-    auto lock = std::lock_guard{lock_};
+    auto lock = std::lock_guard{logd_lock};
 
     if (logs_[log_id].empty()) {
         logs_[log_id].push_back(SerializedLogChunk(max_size_[log_id] / 4));
@@ -113,8 +113,8 @@ void SerializedLogBuffer::MaybePrune(log_id_t log_id) {
     if (total_size > max_size_[log_id]) {
         Prune(log_id, total_size - max_size_[log_id], 0);
         after_size = GetSizeUsed(log_id);
-        LOG(INFO) << "Pruned Logs from log_id: " << log_id << ", previous size: " << total_size
-                  << " after size: " << after_size;
+        LOG(VERBOSE) << "Pruned Logs from log_id: " << log_id << ", previous size: " << total_size
+                     << " after size: " << after_size;
     }
 
     stats_->set_overhead(log_id, after_size);
@@ -131,17 +131,7 @@ void SerializedLogBuffer::RemoveChunkFromStats(log_id_t log_id, SerializedLogChu
     chunk.DecReaderRefCount();
 }
 
-void SerializedLogBuffer::NotifyReadersOfPrune(
-        log_id_t log_id, const std::list<SerializedLogChunk>::iterator& chunk) {
-    for (const auto& reader_thread : reader_list_->reader_threads()) {
-        auto& state = reinterpret_cast<SerializedFlushToState&>(reader_thread->flush_to_state());
-        state.Prune(log_id, chunk);
-    }
-}
-
 void SerializedLogBuffer::Prune(log_id_t log_id, size_t bytes_to_free, uid_t uid) {
-    auto reader_threads_lock = std::lock_guard{reader_list_->reader_threads_lock()};
-
     auto& log_buffer = logs_[log_id];
     auto it = log_buffer.begin();
     while (it != log_buffer.end()) {
@@ -158,7 +148,7 @@ void SerializedLogBuffer::Prune(log_id_t log_id, size_t bytes_to_free, uid_t uid
                 // fast enough to not back-up logd.  Instead, we can achieve an nearly-as-efficient
                 // but not error-prune batching effect by waking the reader whenever any chunk is
                 // about to be pruned.
-                reader_thread->triggerReader_Locked();
+                reader_thread->TriggerReader();
             }
 
             // Some readers may be still reading from this log chunk, log a warning that they are
@@ -176,7 +166,7 @@ void SerializedLogBuffer::Prune(log_id_t log_id, size_t bytes_to_free, uid_t uid
 
         // Readers may have a reference to the chunk to track their last read log_position.
         // Notify them to delete the reference.
-        NotifyReadersOfPrune(log_id, it_to_prune);
+        it_to_prune->NotifyReadersOfPrune(log_id);
 
         if (uid != 0) {
             // Reorder the log buffer to remove logs from the given UID.  If there are no logs left
@@ -198,17 +188,14 @@ void SerializedLogBuffer::Prune(log_id_t log_id, size_t bytes_to_free, uid_t uid
 
 std::unique_ptr<FlushToState> SerializedLogBuffer::CreateFlushToState(uint64_t start,
                                                                       LogMask log_mask) {
-    return std::make_unique<SerializedFlushToState>(start, log_mask);
+    return std::make_unique<SerializedFlushToState>(start, log_mask, logs_);
 }
 
 bool SerializedLogBuffer::FlushTo(
         LogWriter* writer, FlushToState& abstract_state,
         const std::function<FilterResult(log_id_t log_id, pid_t pid, uint64_t sequence,
                                          log_time realtime)>& filter) {
-    auto lock = std::unique_lock{lock_};
-
     auto& state = reinterpret_cast<SerializedFlushToState&>(abstract_state);
-    state.InitializeLogs(logs_);
 
     while (state.HasUnreadLogs()) {
         LogWithId top = state.PopNextUnreadLog();
@@ -240,13 +227,14 @@ bool SerializedLogBuffer::FlushTo(
         unsigned char entry_copy[kMaxEntrySize] __attribute__((uninitialized));
         CHECK_LT(entry->msg_len(), LOGGER_ENTRY_MAX_PAYLOAD + 1);
         memcpy(entry_copy, entry, sizeof(*entry) + entry->msg_len());
-        lock.unlock();
+        logd_lock.unlock();
 
         if (!reinterpret_cast<SerializedLogEntry*>(entry_copy)->Flush(writer, log_id)) {
+            logd_lock.lock();
             return false;
         }
 
-        lock.lock();
+        logd_lock.lock();
     }
 
     state.set_start(state.start() + 1);
@@ -254,7 +242,7 @@ bool SerializedLogBuffer::FlushTo(
 }
 
 bool SerializedLogBuffer::Clear(log_id_t id, uid_t uid) {
-    auto lock = std::lock_guard{lock_};
+    auto lock = std::lock_guard{logd_lock};
     Prune(id, ULONG_MAX, uid);
 
     // Clearing SerializedLogBuffer never waits for readers and therefore is always successful.
@@ -270,7 +258,7 @@ size_t SerializedLogBuffer::GetSizeUsed(log_id_t id) {
 }
 
 size_t SerializedLogBuffer::GetSize(log_id_t id) {
-    auto lock = std::lock_guard{lock_};
+    auto lock = std::lock_guard{logd_lock};
     return max_size_[id];
 }
 
@@ -283,7 +271,7 @@ bool SerializedLogBuffer::SetSize(log_id_t id, size_t size) {
         return false;
     }
 
-    auto lock = std::lock_guard{lock_};
+    auto lock = std::lock_guard{logd_lock};
     max_size_[id] = size;
 
     MaybePrune(id);
