@@ -189,16 +189,9 @@ TEST_P(LogBufferTest, smoke) {
     FixupMessages(&log_messages);
     LogMessages(log_messages);
 
-    std::vector<LogMessage> read_log_messages;
-    {
-        auto lock = std::lock_guard{logd_lock};
-        std::unique_ptr<LogWriter> test_writer(new TestWriter(&read_log_messages, nullptr));
-        std::unique_ptr<FlushToState> flush_to_state =
-                log_buffer_->CreateFlushToState(1, kLogMaskAll);
-        EXPECT_TRUE(log_buffer_->FlushTo(test_writer.get(), *flush_to_state, nullptr));
-        EXPECT_EQ(2ULL, flush_to_state->start());
-    }
-    CompareLogMessages(log_messages, read_log_messages);
+    auto flush_result = FlushMessages();
+    EXPECT_EQ(2ULL, flush_result.next_sequence);
+    CompareLogMessages(log_messages, flush_result.messages);
 }
 
 TEST_P(LogBufferTest, smoke_with_reader_thread) {
@@ -227,25 +220,7 @@ TEST_P(LogBufferTest, smoke_with_reader_thread) {
     FixupMessages(&log_messages);
     LogMessages(log_messages);
 
-    std::vector<LogMessage> read_log_messages;
-    bool released = false;
-
-    {
-        auto lock = std::lock_guard{logd_lock};
-        std::unique_ptr<LogWriter> test_writer(new TestWriter(&read_log_messages, &released));
-        std::unique_ptr<LogReaderThread> log_reader(
-                new LogReaderThread(log_buffer_.get(), &reader_list_, std::move(test_writer), true,
-                                    0, kLogMaskAll, 0, {}, 1, {}));
-        reader_list_.reader_threads().emplace_back(std::move(log_reader));
-    }
-
-    while (!released) {
-        usleep(5000);
-    }
-    {
-        auto lock = std::lock_guard{logd_lock};
-        EXPECT_EQ(0U, reader_list_.reader_threads().size());
-    }
+    auto read_log_messages = ReadLogMessagesNonBlockingThread({});
     CompareLogMessages(log_messages, read_log_messages);
 }
 
@@ -293,33 +268,20 @@ LogMessage GenerateRandomLogMessage(uint32_t sec) {
     return {entry, message};
 }
 
-TEST_P(LogBufferTest, random_messages) {
+std::vector<LogMessage> GenerateRandomLogMessages(size_t count) {
     srand(1);
     std::vector<LogMessage> log_messages;
-    for (size_t i = 0; i < 1000; ++i) {
+    for (size_t i = 0; i < count; ++i) {
         log_messages.emplace_back(GenerateRandomLogMessage(i));
     }
+    return log_messages;
+}
+
+TEST_P(LogBufferTest, random_messages) {
+    auto log_messages = GenerateRandomLogMessages(1000);
     LogMessages(log_messages);
 
-    std::vector<LogMessage> read_log_messages;
-    bool released = false;
-
-    {
-        auto lock = std::lock_guard{logd_lock};
-        std::unique_ptr<LogWriter> test_writer(new TestWriter(&read_log_messages, &released));
-        std::unique_ptr<LogReaderThread> log_reader(
-                new LogReaderThread(log_buffer_.get(), &reader_list_, std::move(test_writer), true,
-                                    0, kLogMaskAll, 0, {}, 1, {}));
-        reader_list_.reader_threads().emplace_back(std::move(log_reader));
-    }
-
-    while (!released) {
-        usleep(5000);
-    }
-    {
-        auto lock = std::lock_guard{logd_lock};
-        EXPECT_EQ(0U, reader_list_.reader_threads().size());
-    }
+    auto read_log_messages = ReadLogMessagesNonBlockingThread({});
     CompareLogMessages(log_messages, read_log_messages);
 }
 
@@ -335,26 +297,8 @@ TEST_P(LogBufferTest, read_last_sequence) {
     FixupMessages(&log_messages);
     LogMessages(log_messages);
 
-    std::vector<LogMessage> read_log_messages;
-    bool released = false;
-
-    {
-        auto lock = std::lock_guard{logd_lock};
-        std::unique_ptr<LogWriter> test_writer(new TestWriter(&read_log_messages, &released));
-        std::unique_ptr<LogReaderThread> log_reader(
-                new LogReaderThread(log_buffer_.get(), &reader_list_, std::move(test_writer), true,
-                                    0, kLogMaskAll, 0, {}, 3, {}));
-        reader_list_.reader_threads().emplace_back(std::move(log_reader));
-    }
-
-    while (!released) {
-        usleep(5000);
-    }
-    {
-        auto lock = std::lock_guard{logd_lock};
-        EXPECT_EQ(0U, reader_list_.reader_threads().size());
-    }
     std::vector<LogMessage> expected_log_messages = {log_messages.back()};
+    auto read_log_messages = ReadLogMessagesNonBlockingThread({.sequence = 3});
     CompareLogMessages(expected_log_messages, read_log_messages);
 }
 
@@ -371,18 +315,8 @@ TEST_P(LogBufferTest, clear_logs) {
     FixupMessages(&log_messages);
     LogMessages(log_messages);
 
-    std::vector<LogMessage> read_log_messages;
-    bool released = false;
-
     // Connect a blocking reader.
-    {
-        auto lock = std::lock_guard{logd_lock};
-        std::unique_ptr<LogWriter> test_writer(new TestWriter(&read_log_messages, &released));
-        std::unique_ptr<LogReaderThread> log_reader(
-                new LogReaderThread(log_buffer_.get(), &reader_list_, std::move(test_writer), false,
-                                    0, kLogMaskAll, 0, {}, 1, {}));
-        reader_list_.reader_threads().emplace_back(std::move(log_reader));
-    }
+    auto blocking_reader = TestReaderThread({.non_block = false}, *this);
 
     // Wait up to 250ms for the reader to read the first 3 logs.
     constexpr int kMaxRetryCount = 50;
@@ -421,37 +355,130 @@ TEST_P(LogBufferTest, clear_logs) {
     }
     ASSERT_LT(count, kMaxRetryCount);
 
-    // Release the reader, wait for it to get the signal then check that it has been deleted.
-    {
-        auto lock = std::lock_guard{logd_lock};
-        reader_list_.reader_threads().back()->Release();
-    }
-    while (!released) {
-        usleep(5000);
-    }
-    {
-        auto lock = std::lock_guard{logd_lock};
-        EXPECT_EQ(0U, reader_list_.reader_threads().size());
-    }
+    ReleaseAndJoinReaders();
 
     // Check that we have read all 6 messages.
     std::vector<LogMessage> expected_log_messages = log_messages;
     expected_log_messages.insert(expected_log_messages.end(), after_clear_messages.begin(),
                                  after_clear_messages.end());
-    CompareLogMessages(expected_log_messages, read_log_messages);
+    CompareLogMessages(expected_log_messages, blocking_reader.read_log_messages());
 
-    // Finally, call FlushTo and ensure that only the 3 logs after the clear remain in the buffer.
-    std::vector<LogMessage> read_log_messages_after_clear;
-    {
+    // Finally, Flush messages and ensure that only the 3 logs after the clear remain in the buffer.
+    auto flush_after_clear_result = FlushMessages();
+    EXPECT_EQ(7ULL, flush_after_clear_result.next_sequence);
+    CompareLogMessages(after_clear_messages, flush_after_clear_result.messages);
+}
+
+TEST_P(LogBufferTest, tail100_nonblocking_1000total) {
+    auto log_messages = GenerateRandomLogMessages(1000);
+    LogMessages(log_messages);
+
+    constexpr int kTailCount = 100;
+    std::vector<LogMessage> expected_log_messages{log_messages.end() - kTailCount,
+                                                  log_messages.end()};
+    auto read_log_messages = ReadLogMessagesNonBlockingThread({.tail = kTailCount});
+    CompareLogMessages(expected_log_messages, read_log_messages);
+}
+
+TEST_P(LogBufferTest, tail100_blocking_1000total_then1000more) {
+    auto log_messages = GenerateRandomLogMessages(1000);
+    LogMessages(log_messages);
+
+    constexpr int kTailCount = 100;
+    auto blocking_reader = TestReaderThread({.non_block = false, .tail = kTailCount}, *this);
+
+    std::vector<LogMessage> expected_log_messages{log_messages.end() - kTailCount,
+                                                  log_messages.end()};
+
+    // Wait for the reader to have read the messages.
+    int retry_count = 1s / 5000us;
+    while (retry_count--) {
+        usleep(5000);
         auto lock = std::lock_guard{logd_lock};
-        std::unique_ptr<LogWriter> test_writer(
-                new TestWriter(&read_log_messages_after_clear, nullptr));
-        std::unique_ptr<FlushToState> flush_to_state =
-                log_buffer_->CreateFlushToState(1, kLogMaskAll);
-        EXPECT_TRUE(log_buffer_->FlushTo(test_writer.get(), *flush_to_state, nullptr));
-        EXPECT_EQ(7ULL, flush_to_state->start());
+        if (blocking_reader.read_log_messages().size() == expected_log_messages.size()) {
+            CompareLogMessages(expected_log_messages, blocking_reader.read_log_messages());
+            break;
+        }
     }
-    CompareLogMessages(after_clear_messages, read_log_messages_after_clear);
+    ASSERT_GT(retry_count, 0);
+
+    // Log more messages
+    log_messages = GenerateRandomLogMessages(1000);
+    LogMessages(log_messages);
+    expected_log_messages.insert(expected_log_messages.end(), log_messages.begin(),
+                                 log_messages.end());
+
+    // Wait for the reader to have read the new messages.
+    retry_count = 1s / 5000us;
+    while (retry_count--) {
+        usleep(5000);
+        auto lock = std::lock_guard{logd_lock};
+        if (blocking_reader.read_log_messages().size() == expected_log_messages.size()) {
+            CompareLogMessages(expected_log_messages, blocking_reader.read_log_messages());
+            break;
+        }
+    }
+    ASSERT_GT(retry_count, 0);
+
+    ReleaseAndJoinReaders();
+
+    // Final check that no extraneous logs were logged.
+    CompareLogMessages(expected_log_messages, blocking_reader.read_log_messages());
+}
+
+TEST_P(LogBufferTest, tail100_nonblocking_50total) {
+    auto log_messages = GenerateRandomLogMessages(50);
+    LogMessages(log_messages);
+
+    constexpr int kTailCount = 100;
+    auto read_log_messages = ReadLogMessagesNonBlockingThread({.tail = kTailCount});
+    CompareLogMessages(log_messages, read_log_messages);
+}
+
+TEST_P(LogBufferTest, tail100_blocking_50total_then1000more) {
+    auto log_messages = GenerateRandomLogMessages(50);
+    LogMessages(log_messages);
+
+    constexpr int kTailCount = 100;
+    auto blocking_reader = TestReaderThread({.non_block = false, .tail = kTailCount}, *this);
+
+    std::vector<LogMessage> expected_log_messages = log_messages;
+
+    // Wait for the reader to have read the messages.
+    int retry_count = 1s / 5000us;
+    while (retry_count--) {
+        usleep(5000);
+        auto lock = std::lock_guard{logd_lock};
+        if (blocking_reader.read_log_messages().size() == expected_log_messages.size()) {
+            CompareLogMessages(expected_log_messages, blocking_reader.read_log_messages());
+            break;
+        }
+    }
+    ASSERT_GT(retry_count, 0);
+
+    // Log more messages
+    log_messages = GenerateRandomLogMessages(1000);
+    LogMessages(log_messages);
+    expected_log_messages.insert(expected_log_messages.end(), log_messages.begin(),
+                                 log_messages.end());
+
+    // Wait for the reader to have read the new messages.
+    retry_count = 1s / 5000us;
+    while (retry_count--) {
+        usleep(5000);
+        auto lock = std::lock_guard{logd_lock};
+        if (blocking_reader.read_log_messages().size() == expected_log_messages.size()) {
+            CompareLogMessages(expected_log_messages, blocking_reader.read_log_messages());
+
+            break;
+        }
+    }
+    ASSERT_GT(retry_count, 0);
+
+    ReleaseAndJoinReaders();
+
+    // Final check that no extraneous logs were logged.
+    CompareLogMessages(expected_log_messages, blocking_reader.read_log_messages());
 }
 
 INSTANTIATE_TEST_CASE_P(LogBufferTests, LogBufferTest,
