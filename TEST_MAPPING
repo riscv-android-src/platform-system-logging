@@ -1,0 +1,18 @@
+{
+  "presubmit": [
+    {
+      "name": "CtsLiblogTestCases"
+    },
+    {
+      "name": "CtsLogdTestCases"
+    },
+    {
+      "name": "liblog-host-test",
+      "host": true
+    },
+    {
+      "name": "logd-unit-tests",
+      "host": true
+    }
+  ]
+}

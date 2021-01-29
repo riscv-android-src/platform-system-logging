@@ -321,6 +321,7 @@ class PrintLogs : public SingleBufferOperation {
     }
 
     void End() override {
+        auto lock = std::lock_guard{logd_lock};
         std::unique_ptr<LogWriter> test_writer(new StdoutWriter());
         std::unique_ptr<FlushToState> flush_to_state = log_buffer_->CreateFlushToState(1, mask_);
         log_buffer_->FlushTo(test_writer.get(), *flush_to_state, nullptr);
@@ -372,7 +373,7 @@ class PrintAllLogs : public SingleBufferOperation {
     PrintAllLogs(log_time first_log_timestamp, const char* buffer, const char* buffers)
         : SingleBufferOperation(first_log_timestamp, buffer) {
         LogMask mask = BuffersToLogMask(buffers);
-        auto lock = std::unique_lock{reader_list_.reader_threads_lock()};
+        auto lock = std::unique_lock{logd_lock};
         std::unique_ptr<LogWriter> stdout_writer(new StdoutWriter());
         std::unique_ptr<LogReaderThread> log_reader(
                 new LogReaderThread(log_buffer_.get(), &reader_list_, std::move(stdout_writer),
@@ -385,6 +386,23 @@ class PrintAllLogs : public SingleBufferOperation {
         // thread is disconnected to not overflow log buffers, therefore we artificially slow down
         // the incoming log rate.
         usleep(100);
+    }
+
+    void End() override {
+        // Release the reader thread.
+        {
+            auto lock = std::lock_guard{logd_lock};
+            reader_list_.reader_threads().back()->Release();
+        }
+
+        // Wait until it has deleted itself.
+        while (true) {
+            usleep(500);
+            auto lock = std::lock_guard{logd_lock};
+            if (reader_list_.reader_threads().size() == 0) {
+                break;
+            }
+        }
     }
 };
 
