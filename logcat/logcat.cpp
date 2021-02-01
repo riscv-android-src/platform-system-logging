@@ -101,6 +101,7 @@ class Logcat {
     bool print_it_anyways_ = false;
 
     // For PrintDividers()
+    bool print_dividers_ = false;
     log_id_t last_printed_id_ = LOG_ID_MAX;
     bool printed_start_[LOG_ID_MAX] = {};
 
@@ -215,6 +216,8 @@ void Logcat::ProcessBuffer(struct log_msg* buf) {
 
         print_count_ += match;
         if (match || print_it_anyways_) {
+            PrintDividers(buf->id(), print_dividers_);
+
             bytesWritten = android_log_printLogLine(logformat_.get(), output_fd_.get(), &entry);
 
             if (bytesWritten < 0) {
@@ -231,7 +234,7 @@ void Logcat::ProcessBuffer(struct log_msg* buf) {
 }
 
 void Logcat::PrintDividers(log_id_t log_id, bool print_dividers) {
-    if (log_id == last_printed_id_ || print_binary_) {
+    if (log_id == last_printed_id_) {
         return;
     }
     if (!printed_start_[log_id] || print_dividers) {
@@ -530,7 +533,6 @@ int Logcat::Run(int argc, char** argv) {
     bool getLogSize = false;
     bool getPruneList = false;
     bool printStatistics = false;
-    bool printDividers = false;
     unsigned long setLogSize = 0;
     const char* setPruneList = nullptr;
     const char* setId = nullptr;
@@ -696,7 +698,7 @@ int Logcat::Run(int argc, char** argv) {
                 break;
 
             case 'D':
-                printDividers = true;
+                print_dividers_ = true;
                 break;
 
             case 'e':
@@ -789,91 +791,6 @@ int Logcat::Run(int argc, char** argv) {
                         error(EXIT_FAILURE, 0, "Invalid parameter '%s' to -v.", arg.c_str());
                     }
                     if (err) hasSetLogFormat = true;
-                }
-                break;
-
-            case 'Q':
-#define LOGCAT_FILTER "androidboot.logcat="
-#define CONSOLE_PIPE_OPTION "androidboot.consolepipe="
-#define CONSOLE_OPTION "androidboot.console="
-#define QEMU_PROPERTY "ro.kernel.qemu"
-#define QEMU_CMDLINE "qemu.cmdline"
-                // This is a *hidden* option used to start a version of logcat
-                // in an emulated device only.  It basically looks for
-                // androidboot.logcat= on the kernel command line.  If
-                // something is found, it extracts a log filter and uses it to
-                // run the program. The logcat output will go to consolepipe if
-                // androiboot.consolepipe (e.g. qemu_pipe) is given, otherwise,
-                // it goes to androidboot.console (e.g. tty)
-                {
-                    // if not in emulator, exit quietly
-                    if (false == android::base::GetBoolProperty(QEMU_PROPERTY, false)) {
-                        return EXIT_SUCCESS;
-                    }
-
-                    std::string cmdline = android::base::GetProperty(QEMU_CMDLINE, "");
-                    if (cmdline.empty()) {
-                        android::base::ReadFileToString("/proc/cmdline", &cmdline);
-                    }
-
-                    const char* logcatFilter = strstr(cmdline.c_str(), LOGCAT_FILTER);
-                    // if nothing found or invalid filters, exit quietly
-                    if (!logcatFilter) {
-                        return EXIT_SUCCESS;
-                    }
-
-                    const char* p = logcatFilter + strlen(LOGCAT_FILTER);
-                    const char* q = strpbrk(p, " \t\n\r");
-                    if (!q) q = p + strlen(p);
-                    forceFilters = std::string(p, q);
-
-                    // redirect our output to the emulator console pipe or console
-                    const char* consolePipe =
-                        strstr(cmdline.c_str(), CONSOLE_PIPE_OPTION);
-                    const char* console =
-                        strstr(cmdline.c_str(), CONSOLE_OPTION);
-
-                    if (consolePipe) {
-                        p = consolePipe + strlen(CONSOLE_PIPE_OPTION);
-                    } else if (console) {
-                        p = console + strlen(CONSOLE_OPTION);
-                    } else {
-                        return EXIT_FAILURE;
-                    }
-
-                    q = strpbrk(p, " \t\n\r");
-                    int len = q ? q - p : strlen(p);
-                    std::string devname = "/dev/" + std::string(p, len);
-                    std::string pipePurpose("pipe:logcat");
-                    if (consolePipe) {
-                        // example: "qemu_pipe,pipe:logcat"
-                        // upon opening of /dev/qemu_pipe, the "pipe:logcat"
-                        // string with trailing '\0' should be written to the fd
-                        size_t pos = devname.find(',');
-                        if (pos != std::string::npos) {
-                            pipePurpose = devname.substr(pos + 1);
-                            devname = devname.substr(0, pos);
-                        }
-                    }
-
-                    fprintf(stderr, "logcat using %s\n", devname.c_str());
-
-                    int fd = open(devname.c_str(), O_WRONLY | O_CLOEXEC);
-                    if (fd < 0) {
-                        break;
-                    }
-
-                    if (consolePipe) {
-                        // need the trailing '\0'
-                        if (!WriteFully(fd, pipePurpose.c_str(), pipePurpose.size() + 1)) {
-                            close(fd);
-                            return EXIT_FAILURE;
-                        }
-                    }
-                    // close output and error channels, replace with console
-                    dup2(fd, output_fd_.get());
-                    dup2(fd, STDERR_FILENO);
-                    close(fd);
                 }
                 break;
 
@@ -1192,8 +1109,6 @@ If you have enabled significant logging, look into using the -G option to increa
         if (!uids.empty() && uids.count(log_msg.entry.uid) == 0) {
             continue;
         }
-
-        PrintDividers(log_msg.id(), printDividers);
 
         if (print_binary_) {
             if (!WriteFully(output_fd_, &log_msg, log_msg.len())) {
