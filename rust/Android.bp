@@ -1,3 +1,7 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
 rust_library {
     name: "liblogger",
     host_supported: true,
@@ -14,6 +18,14 @@ rust_library {
             ]
         },
     },
+}
+
+rust_library {
+    name: "liblog_event_list",
+    crate_name: "log_event_list",
+    srcs: ["liblog_event_list.rs"],
+    rustlibs: ["liblog_event_list_bindgen"],
+    shared_libs: ["liblog"],
 }
 
 rust_defaults {
