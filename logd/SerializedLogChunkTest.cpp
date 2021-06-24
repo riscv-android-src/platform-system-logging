@@ -18,9 +18,12 @@
 
 #include <limits>
 
+#include <android-base/silent_death_test.h>
 #include <android-base/stringprintf.h>
 #include <android/log.h>
 #include <gtest/gtest.h>
+
+using SerializedLogChunk_DeathTest = SilentDeathTest;
 
 using android::base::StringPrintf;
 
@@ -99,21 +102,21 @@ TEST(SerializedLogChunk, three_logs) {
             "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"                  // Timestamp
             "\x0C\x00last message";                             // msg_len + message
 
-    for (size_t i = 0; i < sizeof(expected_buffer_data); ++i) {
+    for (size_t i = 0; i < sizeof(expected_buffer_data) - 1; ++i) {
         EXPECT_EQ(static_cast<uint8_t>(expected_buffer_data[i]), chunk.data()[i])
                 << "position: " << i;
     }
 }
 
 // Check that the CHECK() in DecReaderRefCount() if the ref count goes bad is caught.
-TEST(SerializedLogChunk, catch_DecCompressedRef_CHECK) {
+TEST_F(SerializedLogChunk_DeathTest, catch_DecCompressedRef_CHECK) {
     size_t chunk_size = 10 * 4096;
     auto chunk = SerializedLogChunk{chunk_size};
     EXPECT_DEATH({ chunk.DecReaderRefCount(); }, "");
 }
 
 // Check that the CHECK() in ClearUidLogs() if the ref count is greater than 0 is caught.
-TEST(SerializedLogChunk, catch_ClearUidLogs_CHECK) {
+TEST_F(SerializedLogChunk_DeathTest, catch_ClearUidLogs_CHECK) {
     size_t chunk_size = 10 * 4096;
     auto chunk = SerializedLogChunk{chunk_size};
     chunk.IncReaderRefCount();
