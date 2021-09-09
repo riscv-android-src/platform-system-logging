@@ -47,10 +47,10 @@ cc_defaults {
     ] + event_flag,
 
     lto: {
-        thin: true,
+        thin: false,
     },
     sanitize: {
-        cfi: true,
+        cfi: false,
     },
 }
 
@@ -158,7 +158,7 @@ cc_defaults {
         "SerializedFlushToStateTest.cpp",
     ],
     sanitize: {
-        cfi: true,
+        cfi: false,
     },
     static_libs: [
         "libbase",
